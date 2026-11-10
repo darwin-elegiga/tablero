@@ -208,6 +208,11 @@ final class Updater {
         }
         // A compromised GitHub account must not be able to run code here: every incoming commit
         // needs a good signature ("G") from a key the local allowed_signers file trusts.
+        let signers = git("config", "gpg.ssh.allowedSignersFile").output
+        guard !signers.isEmpty, FileManager.default.fileExists(atPath: signers) else {
+            return finish("Las actualizaciones están desactivadas hasta que configures la firma: ejecuta ./setup.sh",
+                          updated: true)
+        }
         let unsigned = git("log", "--format=%h %G? %an: %s", "HEAD..origin/main").output
             .split(separator: "\n").filter { $0.split(separator: " ").dropFirst().first != "G" }
         guard unsigned.isEmpty else {
