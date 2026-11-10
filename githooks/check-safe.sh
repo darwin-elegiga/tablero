@@ -112,7 +112,15 @@ if [ -n "$PAGE" ]; then
   grep -qE '(^|[^A-Za-z_.])eval\(|new Function\(' <<<"$PAGE" && block "index.html usa eval o new Function"
 fi
 
-# 5. Commits must carry this repo's identity (never the global work identity).
+# 5. New commits must be signed with a key from .git/info/allowed_signers (the app refuses unsigned updates).
+if [ "$MODE" = "range" ]; then
+  for commit in $(git rev-list "$TIP" --not --remotes); do
+    [ "$(git log -1 --format=%G? "$commit")" = "G" ] ||
+      block "El commit ${commit:0:7} no lleva tu firma (git config commit.gpgsign true y vuelve a hacer el commit)"
+  done
+fi
+
+# 6. Commits must carry this repo's identity (never the global work identity).
 if [ "$MODE" = "range" ]; then
   ME="$(git config --local user.email)"
   [ -z "$ME" ] && block "Este repo no tiene user.email propio (git config --local user.email …)"

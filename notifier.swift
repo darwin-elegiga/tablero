@@ -168,7 +168,8 @@ func run(_ executable: String, _ args: [String], env extra: [String: String] = [
 }
 
 /// Self-update from the git remote: fast-forward todoDir to origin/main, then reload the page
-/// or rebuild and relaunch the app when native files changed. Never touches local commits or edits.
+/// or rebuild and relaunch the app when native files changed. Never touches local commits or edits,
+/// and only applies commits signed by a key in .git/info/allowed_signers (local, never synced).
 final class Updater {
     static let interval: TimeInterval = 6 * 3600
     private static let nativeFiles: Set<String> = ["notifier.swift", "build-notifier.sh", "icon.png"]
@@ -177,7 +178,7 @@ final class Updater {
 
     var onPageUpdated: (() -> Void)?
     var onAppRebuilt: (() -> Void)?
-    /// (message, isUpdate). Called on the main thread.
+    /// (message, worth a notification). Called on the main thread.
     var onResult: ((String, Bool) -> Void)?
 
     func check() { queue.async { self.perform() } }
@@ -204,6 +205,14 @@ final class Updater {
         }
         guard git("status", "--porcelain", "--untracked-files=no").output.isEmpty else {
             return finish("Hay cambios locales sin commit; no se actualiza.")
+        }
+        // A compromised GitHub account must not be able to run code here: every incoming commit
+        // needs a good signature ("G") from a key the local allowed_signers file trusts.
+        let unsigned = git("log", "--format=%h %G? %an: %s", "HEAD..origin/main").output
+            .split(separator: "\n").filter { $0.split(separator: " ").dropFirst().first != "G" }
+        guard unsigned.isEmpty else {
+            return finish("Hay commits en GitHub sin tu firma: no se actualiza por seguridad. Revisa update.log.",
+                          updated: true, detail: unsigned.joined(separator: "\n"))
         }
         let changed = Set(git("diff", "--name-only", head, remote).output.split(separator: "\n").map(String.init))
         let merge = git("merge", "--ff-only", "--quiet", "origin/main")
