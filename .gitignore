@@ -1,0 +1,12 @@
+# Personal data: never commit
+todos.json
+labels.json
+*.backup*.json
+.todos.backup*.json
+*.tmp
+*.log
+
+# Local tooling
+.claude/
+.DS_Store
+*.app/

@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+  /* Cork board background with Liquid Glass panels on top (the glass blurs the cork behind it). */
+  :root {
+    color-scheme: light dark;
+    --cork: #c99a63; --cork-dot: rgba(90, 55, 20, .18); --frame: #6b4423;
+    --text: #1d1d1f; --text-2: rgba(29, 29, 31, .62); --ink: #2a2620; --muted: rgba(42, 38, 32, .6);
+    --glass: rgba(255, 255, 255, .2); --glass-strong: rgba(250, 250, 252, .62); --glass-hover: rgba(255, 255, 255, .36);
+    --edge: rgba(255, 255, 255, .55); --sheen: rgba(255, 255, 255, .6);
+    --shadow: 0 10px 30px -12px rgba(0, 0, 0, .35);
+    --accent: #0a84ff; --danger: #d70015;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --cork: #6e5133; --cork-dot: rgba(0, 0, 0, .25); --frame: #2f1f12;
+      --text: #f5f5f7; --text-2: rgba(245, 245, 247, .65);
+      --glass: rgba(36, 36, 42, .24); --glass-strong: rgba(40, 40, 46, .66); --glass-hover: rgba(255, 255, 255, .1);
+      --edge: rgba(255, 255, 255, .14); --sheen: rgba(255, 255, 255, .18);
+      --shadow: 0 12px 34px -12px rgba(0, 0, 0, .7);
+      --danger: #ff453a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  html { overflow: hidden; }
+  body {
+    margin: 0; display: flex; flex-direction: column; color: var(--text); overflow: auto;
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    background-color: var(--cork);
+    background-image:
+      radial-gradient(var(--cork-dot) 1px, transparent 1.5px),
+      radial-gradient(var(--cork-dot) 1px, transparent 1.5px);
+    background-size: 14px 14px, 23px 23px; background-position: 0 0, 7px 11px;
+    border: 10px solid var(--frame);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* shared glass material */
+  body > header, .lane, .chip, .trash-btn, .trash, .label-pop {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--edge);
+    box-shadow: inset 0 1px 0 var(--sheen), var(--shadow);
+  }
+  .trash, .label-pop { background: var(--glass-strong); }
+
+  /* Liquid Glass for the navbar and the columns: a quiet, clear pane (no light rims or glow) */
+  body > header, .lane {
+    background: var(--lg-fill);
+    -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(120%); backdrop-filter: blur(var(--lg-blur)) saturate(120%);
+    border: 1px solid var(--lg-border);
+    box-shadow: 0 10px 28px -14px rgba(0, 0, 0, .4);
+  }
+  body > header { --lg-blur: 20px; background: var(--lg-fill-bar); } /* notes scroll under it: blur more */
+  :root {
+    --lg-fill: rgba(255, 255, 255, .12); --lg-fill-bar: rgba(255, 255, 255, .22);
+    --lg-border: rgba(255, 255, 255, .22); --lg-blur: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --lg-fill: rgba(255, 255, 255, .04); --lg-fill-bar: rgba(30, 22, 16, .35); --lg-border: rgba(255, 255, 255, .1); }
+  }
+
+  body > header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 12px 16px 0; padding: 10px 14px; border-radius: 20px;
+    position: sticky; top: 12px; left: 16px; z-index: 4;
+  }
+  header h1 { margin: 0 8px 0 2px; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-size: 13px; font-weight: 500; color: var(--text);
+    border-radius: 999px; padding: 4px 11px; cursor: pointer; box-shadow: inset 0 1px 0 var(--sheen);
+    transition: background .15s, transform .15s;
+  }
+  .chip[data-p]:not([data-p=""])::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px rgba(0,0,0,.12); }
+  .chip:hover { background: var(--glass-hover); transform: scale(1.04); }
+  .chip.active { background: var(--glass-strong); box-shadow: inset 0 0 0 2px var(--accent), inset 0 1px 0 var(--sheen); }
+  .chip.new { border-style: dashed; color: var(--text-2); }
+  .count { margin-left: auto; font-size: 13px; color: var(--text-2); }
+
+  /* search + sort */
+  .tools { display: flex; align-items: center; gap: 6px; }
+  .tools input, .tools select, .tools .dir {
+    font: inherit; font-size: 13px; color: var(--text); height: 28px;
+    border: 1px solid var(--edge); border-radius: 999px; background: var(--glass-hover); outline: none;
+  }
+  .tools input { width: 190px; padding: 0 12px; }
+  .tools select { padding: 0 10px; cursor: pointer; }
+  .tools .dir { width: 28px; padding: 0; cursor: pointer; }
+  .tools .dir[hidden] { display: none; }
+  .tools input:focus, .tools select:focus-visible, .tools .dir:focus-visible { box-shadow: 0 0 0 3px rgba(10, 132, 255, .35); }
+  .tools input.on { background: var(--glass-strong); box-shadow: inset 0 0 0 2px var(--accent); }
+  .lane .none { padding: 10px 6px; font-size: 13px; color: var(--text-2); text-align: center; }
+
+  .label-pop { position: fixed; z-index: 10; width: 260px; padding: 14px; border-radius: 20px; color: var(--text); }
+  .label-pop strong { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+  .label-pop input[type=text] {
+    width: 100%; font: inherit; padding: 6px 10px; border-radius: 10px; color: inherit;
+    border: 1px solid var(--edge); background: var(--glass-hover); outline: none;
+  }
+  .label-pop input[type=text]:focus { box-shadow: 0 0 0 3px rgba(10, 132, 255, .35); }
+  .label-pop .swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; margin: 12px 0; }
+  .label-pop .swatch {
+    aspect-ratio: 1; border-radius: 50%; border: none; background: var(--c); cursor: pointer; padding: 0;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,.7), 0 1px 3px rgba(0,0,0,.25); transition: transform .12s;
+  }
+  .label-pop .swatch:hover { transform: scale(1.15); }
+  .label-pop .swatch.picked { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .label-pop .custom { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+  .label-pop .custom input { width: 36px; height: 24px; padding: 0; border: none; background: none; cursor: pointer; }
+  .label-pop .row { display: flex; gap: 6px; margin-top: 14px; }
+
+  /* pill buttons used in the popover and the trash */
+  .ok, .cancel, .remove, .trash button.small {
+    font: inherit; font-size: 13px; font-weight: 500; border: none; border-radius: 999px; padding: 5px 12px; cursor: pointer;
+    background: transparent; color: inherit;
+  }
+  .label-pop .ok, .trash button.restore { background: var(--accent); color: #fff; }
+  .cancel:hover, .trash button.small:not(.restore):hover { background: var(--glass-hover); }
+  .remove { margin-left: auto; }
+  .remove, .trash button.purge, .trash button.empty-all { color: var(--danger); }
+
+  .board {
+    flex: 1; display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr));
+    gap: 14px; padding: 14px 16px 90px; align-items: start;
+  }
+  .lane { border-radius: 24px; padding: 12px 12px 14px; min-height: 200px; transition: background .15s, box-shadow .15s; }
+  .lane.over { box-shadow: inset 0 0 0 2px var(--accent), 0 10px 28px -14px rgba(0, 0, 0, .4); }
+  .lane h2 { margin: 2px 6px 16px; font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
+  .lane h2 small {
+    font-size: 12px; font-weight: 600; color: var(--text-2);
+    padding: 1px 8px; border-radius: 999px; background: var(--glass-hover);
+  }
+  .notes { display: flex; flex-direction: column; gap: 14px; min-height: 40px; }
+
+  .note {
+    position: relative; background: var(--c); color: var(--ink);
+    padding: 18px 14px 10px; min-height: 96px; border-radius: 4px 4px 16px 4px;
+    transform: rotate(var(--r)); cursor: grab;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 1px rgba(0,0,0,.1), 0 8px 16px -6px rgba(0,0,0,.35);
+    transition: transform .15s, box-shadow .15s, translate .2s ease;
+  }
+  .note::before { /* tape */
+    content: ""; position: absolute; top: -9px; left: 50%; width: 64px; height: 20px;
+    transform: translateX(-50%) rotate(calc(var(--r) * -2));
+    background: rgba(255, 255, 255, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    box-shadow: 0 1px 2px rgba(0,0,0,.12);
+  }
+  .note:hover { transform: rotate(0deg) scale(1.03); box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 2px 2px rgba(0,0,0,.1), 0 14px 24px -8px rgba(0,0,0,.4); z-index: 1; }
+  .note.dragging { display: none; }
+  /* slot where the dragged note will land; the other notes slide around it */
+  .ghost {
+    border-radius: 4px 4px 16px 4px; background: rgba(0, 0, 0, .14);
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, .3); border: 2px dashed rgba(255, 255, 255, .35);
+    animation: ghost-in .15s ease-out;
+  }
+  @keyframes ghost-in { from { opacity: 0; } }
+  .lane[data-status=done] .note { filter: saturate(.55); }
+  .lane[data-status=done] .note .text { text-decoration: line-through; text-decoration-color: rgba(0,0,0,.45); }
+  .note .text { font: 20px/1.2 "Patrick Hand", cursive; word-break: break-word; outline: none; white-space: pre-wrap; }
+  .note .text[contenteditable=true] { background: rgba(255,255,255,.45); border-radius: 4px; padding: 2px 4px; cursor: text; }
+  .note .foot { display: flex; align-items: center; margin-top: 10px; gap: 6px; font-size: 12px; color: var(--muted); }
+  .note .proj { cursor: pointer; font-weight: 600; }
+  .note .del { margin-left: auto; background: none; border: none; font-size: 14px; color: var(--muted); cursor: pointer; opacity: 0; }
+  .note:hover .del { opacity: 1; }
+  .note .del:hover { color: #b3261e; }
+
+  .add-btn {
+    width: 100%; margin-top: 14px; padding: 8px; border: 1px dashed var(--edge); border-radius: 14px;
+    background: transparent; color: var(--text-2); font: inherit; font-weight: 500; cursor: pointer; transition: background .15s;
+  }
+  .add-btn:hover { background: var(--glass-hover); color: var(--text); }
+  .add-form { margin-top: 14px; background: #fff47a; padding: 12px; border-radius: 4px 4px 16px 4px; box-shadow: 0 8px 16px -6px rgba(0,0,0,.35); }
+  .add-form textarea, .add-form input {
+    width: 100%; border: none; background: rgba(255,255,255,.5); border-radius: 6px; padding: 6px 8px;
+    font: 18px "Patrick Hand", cursive; color: var(--ink); resize: vertical;
+  }
+  .add-form input { margin-top: 6px; font-size: 15px; }
+  .add-form .row { display: flex; gap: 6px; margin-top: 8px; }
+  .add-form button { font: inherit; border: none; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+  .add-form .ok { background: #2a2620; color: #fff; }
+  .add-form .cancel { background: transparent; color: var(--ink); }
+
+  .trash-btn {
+    position: fixed; right: 26px; bottom: 26px; z-index: 5; width: 58px; height: 58px; border-radius: 50%;
+    font-size: 25px; cursor: pointer; transition: transform .15s, background .15s;
+  }
+  .trash-btn:hover { transform: scale(1.08); background: var(--glass-hover); }
+  .trash-btn.over { transform: scale(1.15); background: rgba(255, 69, 58, .3); }
+  .trash-btn .badge {
+    position: absolute; top: -3px; right: -3px; min-width: 20px; padding: 1px 6px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 12px; font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,.25);
+  }
+  .trash {
+    position: fixed; right: 26px; bottom: 96px; z-index: 6; width: min(390px, calc(100vw - 52px)); max-height: 60vh;
+    display: flex; flex-direction: column; border-radius: 24px; overflow: hidden; color: var(--text);
+    transform-origin: bottom right; animation: pop .18s ease-out;
+  }
+  @keyframes pop { from { opacity: 0; transform: scale(.94) translateY(6px); } }
+  .trash[hidden] { display: none; }
+  .trash header { display: flex; align-items: center; padding: 14px 16px 10px; }
+  .trash header strong { font-size: 15px; font-weight: 650; }
+  .trash header small { color: var(--text-2); font-size: 12px; }
+  .trash .empty-all { margin-left: auto; }
+  .trash ul { list-style: none; margin: 0; padding: 0 8px 8px; overflow-y: auto; }
+  .trash li { padding: 9px 12px; margin: 6px 0; border-radius: 14px; background: var(--glass-hover); border-left: 5px solid var(--c); }
+  .trash li .t { font: 17px/1.2 "Patrick Hand", cursive; word-break: break-word; }
+  .trash li .meta { display: flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 12px; color: var(--text-2); }
+  .trash li .meta span { margin-right: auto; }
+  .trash .none { padding: 6px 16px 18px; color: var(--text-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tablero</h1>
+  <div class="chips" id="chips"></div>
+  <span class="count" id="count"></span>
+  <div class="tools">
+    <input type="search" id="search" placeholder="Buscar… (/)" autocomplete="off" spellcheck="false">
+    <select id="sort" title="Ordenar las notas de cada columna">
+      <option value="manual">Orden manual (arrastrar)</option>
+      <option value="updated">Fecha de modificación</option>
+      <option value="created">Fecha de creación</option>
+      <option value="text">Nombre</option>
+      <option value="project">Proyecto</option>
+    </select>
+    <button id="dir" class="dir" title="Invertir el orden"></button>
+  </div>
+</header>
+<main class="board" id="board"></main>
+<aside class="trash" id="trash" hidden></aside>
+<button class="trash-btn" id="trash-btn" title="Papelera (también puedes arrastrar notas aquí)">🗑</button>
+<datalist id="projects"></datalist>
+<script>
+const COLUMNS = [["todo", "Pendiente"], ["doing", "En proceso"], ["qa", "QA"], ["done", "Hecho"]];
+const PAPER = ["#fff47a", "#ffb8d1", "#a8e6ff", "#b9f5a4", "#ffcf8a", "#d7c2ff", "#ffe0e9", "#c9f2e7"];
+// Choices offered when picking a label color (PAPER stays as-is: it is the automatic fallback)
+const SWATCHES = [...PAPER, "#ff9e9e", "#ffd59e", "#9ed8ff", "#8ee3b5", "#e3b8ff", "#e6e1d6"];
+
+let todos = [];
+let labels = {}; // project -> chosen color (labels.json)
+const TRASH_DAYS = 30; // must match server.py / notifier.swift
+let filter = "";
+let query = ""; // search box text
+let busy = false; // pause polling while dragging, editing or adding
+const $ = id => document.getElementById(id);
+
+// ---- sorting: "manual" is the drag order; the rest sort each column by a field ----
+const SORT_DEFAULT_DIR = { manual: 1, updated: -1, created: -1, text: 1, project: 1 };
+let sort = "manual", dir = 1;
+try {
+  const saved = JSON.parse(localStorage.getItem("tablero.sort"));
+  if (saved && saved.sort in SORT_DEFAULT_DIR) ({ sort, dir } = saved);
+} catch {}
+
+const collator = new Intl.Collator("es", { sensitivity: "base", numeric: true });
+const modifiedOf = t => t.updated || t.created || "";
+const SORTERS = {
+  manual: (a, b) => a.order - b.order,
+  updated: (a, b) => modifiedOf(a).localeCompare(modifiedOf(b)),
+  created: (a, b) => (a.created || "").localeCompare(b.created || ""),
+  text: (a, b) => collator.compare(a.text, b.text),
+  project: (a, b) => collator.compare(a.project, b.project),
+};
+// Ties (same project, same second) fall back to the manual order
+const compare = (a, b) => dir * SORTERS[sort](a, b) || a.order - b.order;
+
+function setSort(next, nextDir = SORT_DEFAULT_DIR[next]) {
+  sort = next;
+  dir = nextDir;
+  try { localStorage.setItem("tablero.sort", JSON.stringify({ sort, dir })); } catch {}
+  render();
+}
+
+const fold = s => String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+// Every word typed must appear in the note text or its project (accents and case ignored)
+const matches = t => fold(query).split(/\s+/).filter(Boolean).every(w => fold(t.text + " " + t.project).includes(w));
+
+// Inside Tablero.app the native bridge serves the API; in a browser, server.py does.
+const bridge = window.webkit?.messageHandlers?.todos;
+const api = (path = "", opts = {}) => bridge
+  ? bridge.postMessage({ method: opts.method || "GET", id: path.slice(1), body: opts.body || "" })
+      .then(r => (r ? JSON.parse(r) : null))
+  : fetch("/api/todos" + path, { headers: { "Content-Type": "application/json" }, ...opts })
+      .then(r => (r.status === 204 ? null : r.json()));
+const labelsApi = (opts = {}) => bridge
+  ? bridge.postMessage({ resource: "labels", method: opts.method || "GET", body: opts.body || "" })
+      .then(r => (r ? JSON.parse(r) : {}))
+  : fetch("/api/labels", { headers: { "Content-Type": "application/json" }, ...opts }).then(r => r.json());
+
+function hash(s) {
+  let h = 0;
+  for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return Math.abs(h);
+}
+const HEX_COLOR = /^#[0-9a-f]{6}$/i; // labels.json is user data: never let it inject CSS
+const colorOf = project => (HEX_COLOR.test(labels[project]) && labels[project]) || PAPER[hash(project) % PAPER.length];
+const tiltOf = id => ((hash(id) % 7) - 3) * 0.6 + "deg";
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function render() {
+  const active = todos.filter(t => !t.deleted);
+  const projects = [...new Set([...active.map(t => t.project), ...Object.keys(labels)])].sort();
+  if (filter && !projects.includes(filter)) filter = "";
+  $("chips").innerHTML = `<button class="chip all${filter ? "" : " active"}" data-p="">Todos</button>` +
+    projects.map(p => `<button class="chip${p === filter ? " active" : ""}" data-p="${esc(p)}" style="--c:${colorOf(p)}"
+      title="Clic: filtrar · Doble clic o clic derecho: cambiar color">${esc(p)}</button>`).join("") +
+    `<button class="chip new" title="Crear una etiqueta con su color">+ Etiqueta</button>`;
+  $("projects").innerHTML = projects.map(p => `<option value="${esc(p)}">`).join("");
+
+  const pending = active.filter(t => t.status !== "done").length;
+  $("count").textContent = `${pending} sin terminar`;
+
+  $("sort").value = sort;
+  $("dir").hidden = sort === "manual";
+  $("dir").textContent = dir > 0 ? "↑" : "↓";
+  const byDate = sort === "updated" || sort === "created";
+  const [up, down] = byDate ? ["Más antiguas primero", "Más recientes primero"] : ["A → Z", "Z → A"];
+  $("dir").title = `${dir > 0 ? up : down} · clic para invertir`;
+  $("search").classList.toggle("on", !!query.trim());
+
+  const shown = active.filter(t => (!filter || t.project === filter) && matches(t)).sort(compare);
+  $("board").innerHTML = COLUMNS.map(([status, title]) => {
+    const notes = shown.filter(t => t.status === status);
+    return `
+    <section class="lane" data-status="${status}">
+      <h2>${title} <small>${notes.length}</small></h2>
+      <div class="notes">${notes.map(noteHtml).join("") || (query.trim() ? `<div class="none">Sin resultados</div>` : "")}</div>
+      <button class="add-btn">+ Añadir nota</button>
+    </section>`;
+  }).join("");
+  renderTrash();
+}
+
+// ---- trash: deleted notes are kept TRASH_DAYS days, then purged on load ----
+function renderTrash() {
+  const trashed = todos.filter(t => t.deleted).sort((a, b) => b.deleted.localeCompare(a.deleted));
+  $("trash-btn").innerHTML = "🗑" + (trashed.length ? `<span class="badge">${trashed.length}</span>` : "");
+  if ($("trash").hidden) return;
+  const daysLeft = t => Math.max(1, Math.ceil(TRASH_DAYS - (Date.now() - new Date(t.deleted)) / 86400000));
+  const day = t => new Date(t.deleted).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+  $("trash").innerHTML = `
+    <header>
+      <div><strong>Papelera</strong><br><small>Se vacía sola a los ${TRASH_DAYS} días</small></div>
+      ${trashed.length ? `<button class="small empty-all">Vaciar</button>` : ""}
+    </header>
+    ${trashed.length ? `<ul>${trashed.map(t => `
+      <li data-id="${t.id}" style="--c:${colorOf(t.project)}">
+        <div class="t">${esc(t.text)}</div>
+        <div class="meta">
+          <span>${esc(t.project)} · ${day(t)} · quedan ${daysLeft(t)} d</span>
+          <button class="small restore">Restaurar</button>
+          <button class="small purge" title="Borrar para siempre">Borrar</button>
+        </div>
+      </li>`).join("")}</ul>` : `<div class="none">No hay notas borradas.</div>`}`;
+}
+
+$("trash-btn").addEventListener("click", () => {
+  $("trash").hidden = !$("trash").hidden;
+  renderTrash();
+});
+
+// Click outside the trash panel (or Esc) closes it
+document.addEventListener("mousedown", e => {
+  if (!$("trash").hidden && !e.target.closest("#trash, #trash-btn")) $("trash").hidden = true;
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") $("trash").hidden = true;
+});
+
+$("trash").addEventListener("click", async e => {
+  const item = e.target.closest("li");
+  if (e.target.classList.contains("restore")) {
+    await api("/" + item.dataset.id, { method: "PATCH", body: JSON.stringify({ deleted: null }) });
+  } else if (e.target.classList.contains("purge")) {
+    if (!confirm("¿Borrar esta nota para siempre?")) return;
+    await api("/" + item.dataset.id, { method: "DELETE" });
+  } else if (e.target.classList.contains("empty-all")) {
+    const trashed = todos.filter(t => t.deleted);
+    if (!confirm(`¿Borrar para siempre ${trashed.length === 1 ? "la nota" : `las ${trashed.length} notas`} de la papelera?`)) return;
+    for (const t of trashed) await api("/" + t.id, { method: "DELETE" });
+  } else return;
+  load();
+});
+
+// Dropping a note on the trash button also deletes it
+$("trash-btn").addEventListener("dragover", e => {
+  if (!dragId) return;
+  e.preventDefault();
+  $("trash-btn").classList.add("over");
+});
+$("trash-btn").addEventListener("dragleave", () => $("trash-btn").classList.remove("over"));
+$("trash-btn").addEventListener("drop", async e => {
+  e.preventDefault();
+  $("trash-btn").classList.remove("over");
+  const id = dragId;
+  busy = false;
+  await api("/" + id, { method: "DELETE" });
+  load();
+});
+
+function noteHtml(t) {
+  return `
+  <article class="note" draggable="true" data-id="${t.id}" style="--c:${colorOf(t.project)};--r:${tiltOf(t.id)}">
+    <div class="text" title="Doble clic para editar">${esc(t.text)}</div>
+    <div class="foot">
+      <span class="proj" title="Clic para cambiar de proyecto">${esc(t.project)}</span>
+      <button class="del" title="Mover a la papelera">✕</button>
+    </div>
+  </article>`;
+}
+
+async function load() {
+  if (busy || document.hidden) return;
+  [todos, labels] = await Promise.all([api(), labelsApi()]);
+  render();
+}
+
+// ---- drag & drop ----
+let dragId = null;
+const ghost = document.createElement("div");
+ghost.className = "ghost";
+
+// The note right after the ghost (the hidden dragged note doesn't count), or null at the end
+function ghostNext() {
+  let next = ghost.nextElementSibling;
+  while (next && !next.matches(".note:not(.dragging)")) next = next.nextElementSibling;
+  return next;
+}
+
+// FLIP: move the ghost, then slide every note from its old spot to its new one
+function flip(mutate) {
+  const notes = [...$("board").querySelectorAll(".note:not(.dragging)")];
+  const first = new Map(notes.map(n => [n, n.getBoundingClientRect()]));
+  mutate();
+  for (const n of notes) {
+    const a = first.get(n), b = n.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) continue;
+    n.style.transition = "none";
+    n.style.translate = `${dx}px ${dy}px`;
+    n.offsetWidth; // commit the start position before animating back to 0
+    n.style.transition = n.style.translate = "";
+  }
+}
+
+$("board").addEventListener("dragstart", e => {
+  const note = e.target.closest(".note");
+  if (!note) return;
+  dragId = note.dataset.id;
+  busy = true;
+  e.dataTransfer.effectAllowed = "move";
+  ghost.style.height = note.offsetHeight + "px";
+  // Next frame: the drag image is already taken, so the note can give its place to the ghost
+  requestAnimationFrame(() => {
+    note.before(ghost);
+    note.classList.add("dragging");
+  });
+});
+
+$("board").addEventListener("dragend", () => {
+  dragId = null;
+  busy = false;
+  ghost.remove();
+  document.querySelectorAll(".dragging, .over").forEach(el => el.classList.remove("dragging", "over"));
+});
+
+$("board").addEventListener("dragover", e => {
+  const lane = e.target.closest(".lane");
+  if (!lane || !dragId) return;
+  e.preventDefault();
+  document.querySelectorAll(".lane.over").forEach(l => l !== lane && l.classList.remove("over"));
+  lane.classList.add("over");
+  // Layout positions (offsetTop), not on-screen ones, so notes mid-animation don't make the ghost jump
+  const list = lane.querySelector(".notes");
+  const top = list.getBoundingClientRect().top - list.offsetTop;
+  const before = [...list.querySelectorAll(".note:not(.dragging)")]
+    .find(n => e.clientY < top + n.offsetTop + n.offsetHeight / 2) || null;
+  if (ghost.parentNode !== list || ghostNext() !== before) flip(() => list.insertBefore(ghost, before));
+});
+
+$("board").addEventListener("drop", async e => {
+  const lane = e.target.closest(".lane");
+  if (!lane || !dragId) return;
+  e.preventDefault();
+  const status = lane.dataset.status;
+  const siblings = [...lane.querySelectorAll(".note")].filter(n => n.dataset.id !== dragId);
+  const before = lane.contains(ghost) ? ghostNext() : null;
+  const todo = todos.find(t => t.id === dragId);
+
+  if (sort !== "manual") {
+    // Moving to another column: its sort decides the position, so only the column changes.
+    if (todo.status !== status) {
+      todo.status = status;
+      busy = false;
+      render();
+      await api("/" + todo.id, { method: "PATCH", body: JSON.stringify({ status }) });
+      return load();
+    }
+    // Reordering inside a sorted column: keep what is on screen as the new manual order
+    // (hidden notes included), with the dragged note at its new spot, then switch to manual.
+    const column = todos.filter(t => !t.deleted && t.status === status && t !== todo).sort(compare);
+    const at = before ? column.findIndex(t => t.id === before.dataset.id)
+      : siblings.length ? column.findIndex(t => t.id === siblings.at(-1).dataset.id) + 1 : column.length;
+    column.splice(at, 0, todo);
+    const changed = column.filter((t, i) => t.order !== i && (t.order = i, true));
+    busy = false;
+    setSort("manual");
+    await Promise.all(changed.map(t => api("/" + t.id, { method: "PATCH", body: JSON.stringify({ order: t.order }) })));
+    return load();
+  }
+
+  const orderOf = n => todos.find(t => t.id === n.dataset.id).order;
+  let order;
+  if (!siblings.length) order = Date.now() / 1000;
+  else if (!before) order = orderOf(siblings.at(-1)) + 1;
+  else {
+    const idx = siblings.indexOf(before);
+    order = idx === 0 ? orderOf(before) - 1 : (orderOf(siblings[idx - 1]) + orderOf(before)) / 2;
+  }
+  Object.assign(todo, { status, order });
+  busy = false;
+  render();
+  await api("/" + todo.id, { method: "PATCH", body: JSON.stringify({ status, order }) });
+  load();
+});
+
+// ---- search + sort controls ----
+$("search").addEventListener("input", e => {
+  query = e.target.value;
+  render();
+});
+$("search").addEventListener("keydown", e => {
+  if (e.key === "Escape" && e.target.value) {
+    e.stopPropagation();
+    e.target.value = query = "";
+    render();
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, select, [contenteditable=true]")) return;
+  if (e.key === "/" || (e.key === "f" && (e.metaKey || e.ctrlKey))) {
+    e.preventDefault();
+    $("search").focus();
+    $("search").select();
+  }
+});
+$("sort").addEventListener("change", e => setSort(e.target.value));
+$("dir").addEventListener("click", () => setSort(sort, -dir));
+
+// ---- clicks: filters, delete, project, add ----
+$("chips").addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  if (chip.classList.contains("new")) return openLabelEditor(chip);
+  filter = chip.dataset.p;
+  render();
+});
+
+const editLabel = e => {
+  const chip = e.target.closest(".chip[data-p]");
+  if (!chip || !chip.dataset.p) return;
+  e.preventDefault();
+  openLabelEditor(chip, chip.dataset.p);
+};
+$("chips").addEventListener("dblclick", editLabel);
+$("chips").addEventListener("contextmenu", editLabel);
+
+// ---- labels: create one, or change an existing project's color ----
+function openLabelEditor(anchor, project = null) {
+  document.querySelector(".label-pop")?.remove();
+  busy = true;
+  let color = project ? colorOf(project) : SWATCHES.find(c => !Object.values(labels).includes(c)) || SWATCHES[0];
+  const unused = project && !todos.some(t => t.project === project && !t.deleted);
+  const pop = document.createElement("div");
+  pop.className = "label-pop";
+  pop.innerHTML = `
+    <strong>${project ? `Color de «${esc(project)}»` : "Nueva etiqueta"}</strong>
+    ${project ? "" : `<input type="text" placeholder="Nombre (proyecto)" list="projects">`}
+    <div class="swatches">${SWATCHES.map(c => `<button class="swatch" data-c="${c}" style="--c:${c}" title="${c}"></button>`).join("")}</div>
+    <label class="custom">Otro color: <input type="color"></label>
+    <div class="row">
+      <button class="ok">${project ? "Guardar" : "Crear"}</button>
+      <button class="cancel">Cancelar</button>
+      ${unused ? `<button class="remove" title="No la usa ninguna nota">Quitar</button>` : ""}
+    </div>`;
+  document.body.append(pop);
+  const box = anchor.getBoundingClientRect();
+  pop.style.top = box.bottom + 8 + "px";
+  pop.style.left = Math.max(8, Math.min(box.left, innerWidth - pop.offsetWidth - 8)) + "px";
+
+  const picker = pop.querySelector("input[type=color]");
+  const pick = c => {
+    color = c;
+    picker.value = c;
+    pop.querySelectorAll(".swatch").forEach(s => s.classList.toggle("picked", s.dataset.c === c));
+  };
+  pick(color);
+  picker.addEventListener("input", () => pick(picker.value));
+  pop.querySelectorAll(".swatch").forEach(s => (s.onclick = () => pick(s.dataset.c)));
+
+  const name = pop.querySelector("input[type=text]");
+  (name || pop.querySelector(".ok")).focus();
+  const close = () => {
+    pop.remove();
+    document.removeEventListener("mousedown", outside);
+    busy = false;
+    load();
+  };
+  const outside = e => !pop.contains(e.target) && close();
+  setTimeout(() => document.addEventListener("mousedown", outside));
+  const save = async next => {
+    labels = await labelsApi({ method: "PUT", body: JSON.stringify(next) });
+    close();
+  };
+
+  pop.querySelector(".cancel").onclick = close;
+  pop.querySelector(".remove")?.addEventListener("click", () => {
+    const { [project]: _, ...rest } = labels;
+    save(rest);
+  });
+  pop.querySelector(".ok").onclick = () => {
+    const label = project || name.value.trim();
+    if (!label) return name.focus();
+    if (!project) filter = label;
+    save({ ...labels, [label]: color });
+  };
+  pop.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); pop.querySelector(".ok").click(); }
+    if (e.key === "Escape") close();
+  });
+}
+
+$("board").addEventListener("click", async e => {
+  const note = e.target.closest(".note");
+  if (note && e.target.classList.contains("del")) { // recoverable from the trash, so no confirm
+    await api("/" + note.dataset.id, { method: "DELETE" });
+    return load();
+  }
+  if (note && e.target.classList.contains("proj")) {
+    const project = prompt("Proyecto:", e.target.textContent);
+    if (!project || !project.trim()) return;
+    await api("/" + note.dataset.id, { method: "PATCH", body: JSON.stringify({ project: project.trim() }) });
+    return load();
+  }
+  if (e.target.classList.contains("add-btn")) openAddForm(e.target);
+});
+
+function openAddForm(btn) {
+  busy = true;
+  const lane = btn.closest(".lane");
+  const form = document.createElement("form");
+  form.className = "add-form";
+  form.innerHTML = `
+    <textarea rows="2" placeholder="¿Qué hay que hacer?" required></textarea>
+    <input placeholder="Proyecto" list="projects" value="${esc(filter)}">
+    <div class="row"><button class="ok">Pegar nota</button><button type="button" class="cancel">Cancelar</button></div>`;
+  btn.replaceWith(form);
+  const text = form.querySelector("textarea");
+  text.focus();
+  const close = () => { busy = false; load(); };
+  form.querySelector(".cancel").onclick = close;
+  text.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    if (e.key === "Escape") close();
+  });
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    await api("", {
+      method: "POST",
+      body: JSON.stringify({ text: text.value, project: form.querySelector("input").value || "General", status: lane.dataset.status }),
+    });
+    close();
+  });
+}
+
+// ---- inline edit ----
+$("board").addEventListener("dblclick", e => {
+  const text = e.target.closest(".note .text");
+  if (!text) return;
+  busy = true;
+  const note = text.closest(".note");
+  note.draggable = false;
+  text.contentEditable = "true";
+  text.focus();
+  document.getSelection().selectAllChildren(text);
+  const original = text.textContent;
+  const finish = async save => {
+    text.removeEventListener("blur", onBlur);
+    text.contentEditable = "false";
+    const value = text.textContent.trim();
+    if (save && value && value !== original) {
+      await api("/" + note.dataset.id, { method: "PATCH", body: JSON.stringify({ text: value }) });
+    }
+    busy = false;
+    load();
+  };
+  const onBlur = () => finish(true);
+  text.addEventListener("blur", onBlur);
+  text.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); text.blur(); }
+    if (ev.key === "Escape") { text.textContent = original; finish(false); }
+  });
+});
+
+load();
+setInterval(load, 5000);
+document.addEventListener("visibilitychange", load);
+</script>
+</body>
+</html>
