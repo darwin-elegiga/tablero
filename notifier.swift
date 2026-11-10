@@ -1,6 +1,7 @@
 // "Tablero.app": native window for the to-do board (WebKit, no background server) and the daily notification.
 // The page talks to TodoStore through a WebKit message bridge; data lives in todos.json (shared with server.py).
 // Launched with --notify by daily-reminder.sh. Build: build-notifier.sh
+// Self-updates from the git remote (see Updater); log in update.log.
 import AppKit
 import UserNotifications
 import WebKit
@@ -118,12 +119,106 @@ final class TodoStore {
     }
 }
 
+/// Runs a command in todoDir and returns its exit status and combined output.
+@discardableResult
+func run(_ executable: String, _ args: [String], env extra: [String: String] = [:]) -> (status: Int32, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = args
+    process.currentDirectoryURL = todoDir
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin" // apps launched from Finder get a minimal PATH
+    extra.forEach { env[$0.key] = $0.value }
+    process.environment = env
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do { try process.run() } catch { return (-1, "\(error)") }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return (process.terminationStatus, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+}
+
+/// Self-update from the git remote: fast-forward todoDir to origin/main, then reload the page
+/// or rebuild and relaunch the app when native files changed. Never touches local commits or edits.
+final class Updater {
+    static let interval: TimeInterval = 6 * 3600
+    private static let nativeFiles: Set<String> = ["notifier.swift", "build-notifier.sh", "icon.png"]
+    private let queue = DispatchQueue(label: "tablero.updater")
+    private let logFile = todoDir.appendingPathComponent("update.log")
+
+    var onPageUpdated: (() -> Void)?
+    var onAppRebuilt: (() -> Void)?
+    /// (message, isUpdate). Called on the main thread.
+    var onResult: ((String, Bool) -> Void)?
+
+    func check() { queue.async { self.perform() } }
+
+    private func git(_ args: String...) -> (status: Int32, output: String) {
+        run("/usr/bin/git", args, env: [
+            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes -o ConnectTimeout=15",
+            "GIT_TERMINAL_PROMPT": "0",
+        ])
+    }
+
+    private func perform() {
+        func finish(_ message: String, updated: Bool = false, detail: String = "") {
+            log(detail.isEmpty ? message : "\(message)\n\(detail)")
+            DispatchQueue.main.async { self.onResult?(message, updated) }
+        }
+        let fetch = git("fetch", "--quiet", "origin", "main")
+        guard fetch.status == 0 else { return finish("No se pudo consultar GitHub (sin red o sin acceso SSH).", detail: fetch.output) }
+        let head = git("rev-parse", "HEAD").output
+        let remote = git("rev-parse", "origin/main").output
+        guard head != remote else { return finish("Tablero ya está en la última versión (\(head.prefix(7))).") }
+        guard git("merge-base", "--is-ancestor", "HEAD", "origin/main").status == 0 else {
+            return finish("Hay commits locales que no están en GitHub; no se actualiza.")
+        }
+        guard git("status", "--porcelain", "--untracked-files=no").output.isEmpty else {
+            return finish("Hay cambios locales sin commit; no se actualiza.")
+        }
+        let changed = Set(git("diff", "--name-only", head, remote).output.split(separator: "\n").map(String.init))
+        let merge = git("merge", "--ff-only", "--quiet", "origin/main")
+        guard merge.status == 0 else { return finish("Falló la actualización (git merge).", detail: merge.output) }
+        log("Updated \(head.prefix(7)) -> \(remote.prefix(7)): \(changed.sorted().joined(separator: ", "))")
+
+        if !changed.isDisjoint(with: Self.nativeFiles) {
+            let build = run("/bin/zsh", [todoDir.appendingPathComponent("build-notifier.sh").path])
+            guard build.status == 0 else {
+                return finish("Código actualizado, pero la recompilación falló: sigue la app anterior. Detalles en update.log.",
+                              detail: build.output)
+            }
+            finish("Tablero actualizado a \(remote.prefix(7)). Se reinicia.", updated: true)
+            DispatchQueue.main.async { self.onAppRebuilt?() }
+        } else {
+            finish("Tablero actualizado a \(remote.prefix(7)).", updated: true)
+            if changed.contains("index.html") { DispatchQueue.main.async { self.onPageUpdated?() } }
+        }
+    }
+
+    private func log(_ line: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let entry = Data("[\(stamp)] \(line)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: logFile) {
+            handle.seekToEndOfFile()
+            handle.write(entry)
+            try? handle.close()
+        } else {
+            try? entry.write(to: logFile)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, WKScriptMessageHandlerWithReply, WKUIDelegate {
     let store = TodoStore()
+    let updater = Updater()
     var window: NSWindow?
+    var webView: WKWebView?
+    private var manualCheck = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        startUpdater()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         let notify = CommandLine.arguments.contains("--notify")
@@ -141,6 +236,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    private func startUpdater() {
+        updater.onPageUpdated = { [weak self] in self?.webView?.reload() }
+        updater.onAppRebuilt = { [weak self] in self?.relaunch() }
+        updater.onResult = { [weak self] message, updated in
+            guard let self else { return }
+            if self.manualCheck {
+                self.manualCheck = false
+                let alert = NSAlert()
+                alert.messageText = message
+                alert.runModal()
+            } else if updated {
+                self.postNotification(id: "tablero-updated", title: "Tablero", body: message)
+            }
+        }
+        // First check shortly after launch, then periodically while the app stays open.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.updater.check() }
+        Timer.scheduledTimer(withTimeInterval: Updater.interval, repeats: true) { [weak self] _ in self?.updater.check() }
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        manualCheck = true
+        updater.check()
+    }
+
+    /// The rebuilt bundle replaced ours on disk: start it once this process has quit.
+    private func relaunch() {
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relauncher.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        try? relauncher.run()
+        NSApp.terminate(nil)
+    }
+
+    private func postNotification(id: String, title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        }
+    }
+
     func showWindow() {
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -154,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         webView.underPageBackgroundColor = .clear
         webView.uiDelegate = self // without it, confirm()/prompt() silently return false/null
         webView.loadFileURL(todoDir.appendingPathComponent("index.html"), allowingReadAccessTo: todoDir)
+        self.webView = webView
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -261,6 +400,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let main = NSMenu()
         let appItem = NSMenuItem()
         appItem.submenu = NSMenu()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        appItem.submenu?.addItem(withTitle: "Tablero \(version)", action: nil, keyEquivalent: "")
+        appItem.submenu?.addItem(withTitle: "Buscar actualizaciones…", action: #selector(checkForUpdates(_:)), keyEquivalent: "u")
+        appItem.submenu?.addItem(.separator())
         appItem.submenu?.addItem(withTitle: "Ocultar Tablero", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appItem.submenu?.addItem(.separator())
         appItem.submenu?.addItem(withTitle: "Salir de Tablero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
