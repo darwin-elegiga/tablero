@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "todos.json")
 LABELS_FILE = os.path.join(BASE_DIR, "labels.json")
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+MAX_NAME = 40
 INDEX_FILE = os.path.join(BASE_DIR, "index.html")
 PORT = int(os.environ.get("TODO_PORT", "8765"))
 
@@ -62,6 +64,16 @@ def load_labels():
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     return labels if isinstance(labels, dict) else {}
+
+
+def load_config():
+    """Local settings, e.g. {"name": "Mi tablero"}. Not tracked by git."""
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return config if isinstance(config, dict) else {}
 
 
 def new_todo(text, project, status="todo", order=None):
@@ -134,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, load_todos())
         elif self.path == "/api/labels":
             self._json(200, load_labels())
+        elif self.path == "/api/config":
+            self._json(200, load_config())
         else:
             self._send(404)
 
@@ -150,6 +164,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(201, todo)
 
     def do_PUT(self):
+        if self.path == "/api/config":
+            return self._put_config()
         if self.path != "/api/labels":
             return self._send(404)
         data = self._body()
@@ -159,6 +175,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "labels must map project names to #rrggbb colors"})
         save_json(LABELS_FILE, data)
         self._json(200, data)
+
+    def _put_config(self):
+        data = self._body()
+        name = data.get("name") if isinstance(data, dict) else None
+        if not isinstance(name, str):
+            return self._json(400, {"error": "name must be a string"})
+        name = name.strip()[:MAX_NAME]
+        config = load_config()
+        if name:
+            config["name"] = name
+        else:
+            config.pop("name", None)
+        save_json(CONFIG_FILE, config)
+        self._json(200, config)
 
     def do_PATCH(self):
         data = self._body()

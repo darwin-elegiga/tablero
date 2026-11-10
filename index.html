@@ -72,7 +72,7 @@
     margin: 12px 16px 0; padding: 10px 14px; border-radius: 20px;
     position: sticky; top: 12px; left: 16px; z-index: 4;
   }
-  header h1 { margin: 0 8px 0 2px; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+  header h1 { cursor: pointer; margin: 0 8px 0 2px; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .chip {
     display: inline-flex; align-items: center; gap: 6px;
@@ -220,7 +220,7 @@
 </head>
 <body>
 <header>
-  <h1>Tablero</h1>
+  <h1 id="title" title="Clic para cambiar el nombre">Tablero</h1>
   <div class="chips" id="chips"></div>
   <span class="count" id="count"></span>
   <div class="tools">
@@ -291,6 +291,10 @@ const api = (path = "", opts = {}) => bridge
       .then(r => (r ? JSON.parse(r) : null))
   : fetch("/api/todos" + path, { headers: { "Content-Type": "application/json" }, ...opts })
       .then(r => (r.status === 204 ? null : r.json()));
+const configApi = (opts = {}) => bridge
+  ? bridge.postMessage({ resource: "config", method: opts.method || "GET", body: opts.body || "" })
+      .then(r => (r ? JSON.parse(r) : {}))
+  : fetch("/api/config", { headers: { "Content-Type": "application/json" }, ...opts }).then(r => r.json());
 const labelsApi = (opts = {}) => bridge
   ? bridge.postMessage({ resource: "labels", method: opts.method || "GET", body: opts.body || "" })
       .then(r => (r ? JSON.parse(r) : {}))
@@ -714,6 +718,21 @@ $("board").addEventListener("dblclick", e => {
   });
 });
 
+
+// Board name lives in config.json (local, not in git); empty falls back to the default.
+const DEFAULT_NAME = "Tablero";
+function showName(name) {
+  const shown = (name || "").trim() || DEFAULT_NAME;
+  $("title").textContent = shown;
+  document.title = shown;
+}
+configApi().then(config => showName(config.name)).catch(() => showName());
+$("title").addEventListener("click", async () => {
+  const name = prompt("Nombre del tablero (vacío = «Tablero»)", $("title").textContent);
+  if (name === null) return;
+  const saved = await configApi({ method: "PUT", body: JSON.stringify({ name: name.trim() }) });
+  showName(saved.name);
+});
 load();
 setInterval(load, 5000);
 document.addEventListener("visibilitychange", load);

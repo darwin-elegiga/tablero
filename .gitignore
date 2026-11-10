@@ -1,6 +1,7 @@
 # Personal data: never commit
 todos.json
 labels.json
+config.json
 *.backup*.json
 .todos.backup*.json
 *.tmp

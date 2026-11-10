@@ -1,4 +1,4 @@
-// "Tablero.app": native window for the to-do board (WebKit, no background server) and the daily notification.
+// Board app: native window for the to-do board (WebKit, no background server) and the daily notification.
 // The page talks to TodoStore through a WebKit message bridge; data lives in todos.json (shared with server.py).
 // Launched with --notify by daily-reminder.sh. Build: build-notifier.sh
 // Self-updates from the git remote (see Updater); log in update.log.
@@ -10,6 +10,21 @@ import WebKit
 let todoDir = ProcessInfo.processInfo.environment["TABLERO_DIR"].map { URL(fileURLWithPath: $0) }
     ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tablero")
 let statuses: Set<String> = ["todo", "doing", "qa", "done"]
+let defaultAppName = "Tablero"
+let bundleID = "io.github.darwin-elegiga.tablero" // keep stable: notification permission and window frame hang on it
+let configFile = todoDir.appendingPathComponent("config.json")
+
+/// Local settings (config.json, not in git), e.g. {"name": "Mi tablero"}.
+func readConfig() -> [String: Any] {
+    guard let data = try? Data(contentsOf: configFile) else { return [:] }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+}
+
+/// The board's user-chosen name, or the default.
+func appName() -> String {
+    let name = (readConfig()["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? defaultAppName : name
+}
 let trashDays = 30.0 // deleted notes stay in the trash at least this long
 
 final class TodoStore {
@@ -56,6 +71,18 @@ final class TodoStore {
         guard let data = try? Data(contentsOf: labelsFile),
               let labels = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return "{}" }
         return json(labels)
+    }
+
+    /// Mirrors server.py's /api/config. An empty name resets to the default.
+    func handleConfig(method: String, body: [String: Any]) -> String? {
+        var config = readConfig()
+        if method == "PUT" {
+            let name = String((body["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+            if name.isEmpty { config.removeValue(forKey: "name") } else { config["name"] = name }
+            guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else { return nil }
+            try? (data + Data("\n".utf8)).write(to: configFile, options: .atomic)
+        }
+        return json(config)
     }
 
     /// Mirrors server.py's REST API. Returns a JSON string, or nil for "no content".
@@ -170,7 +197,7 @@ final class Updater {
         guard fetch.status == 0 else { return finish("No se pudo consultar GitHub (sin red o sin acceso SSH).", detail: fetch.output) }
         let head = git("rev-parse", "HEAD").output
         let remote = git("rev-parse", "origin/main").output
-        guard head != remote else { return finish("Tablero ya está en la última versión (\(head.prefix(7))).") }
+        guard head != remote else { return finish("\(appName()) ya está en la última versión (\(head.prefix(7))).") }
         guard git("merge-base", "--is-ancestor", "HEAD", "origin/main").status == 0 else {
             return finish("Hay commits locales que no están en GitHub; no se actualiza.")
         }
@@ -183,17 +210,32 @@ final class Updater {
         log("Updated \(head.prefix(7)) -> \(remote.prefix(7)): \(changed.sorted().joined(separator: ", "))")
 
         if !changed.isDisjoint(with: Self.nativeFiles) {
-            let build = run("/bin/zsh", [todoDir.appendingPathComponent("build-notifier.sh").path])
-            guard build.status == 0 else {
-                return finish("Código actualizado, pero la recompilación falló: sigue la app anterior. Detalles en update.log.",
-                              detail: build.output)
+            guard buildApp() else {
+                return finish("Código actualizado, pero la recompilación falló: sigue la app anterior. Detalles en update.log.")
             }
-            finish("Tablero actualizado a \(remote.prefix(7)). Se reinicia.", updated: true)
+            finish("\(appName()) actualizado a \(remote.prefix(7)). Se reinicia.", updated: true)
             DispatchQueue.main.async { self.onAppRebuilt?() }
         } else {
-            finish("Tablero actualizado a \(remote.prefix(7)).", updated: true)
+            finish("\(appName()) actualizado a \(remote.prefix(7)).", updated: true)
             if changed.contains("index.html") { DispatchQueue.main.async { self.onPageUpdated?() } }
         }
+    }
+
+    /// Rebuild the bundle (e.g. after a rename) and relaunch it.
+    func rebuild() {
+        queue.async {
+            if self.buildApp() {
+                DispatchQueue.main.async { self.onAppRebuilt?() }
+            } else {
+                DispatchQueue.main.async { self.onResult?("La recompilación falló. Detalles en update.log.", false) }
+            }
+        }
+    }
+
+    private func buildApp() -> Bool {
+        let build = run("/bin/zsh", [todoDir.appendingPathComponent("build-notifier.sh").path])
+        if build.status != 0 { log("Build failed:\n\(build.output)") }
+        return build.status == 0
     }
 
     private func log(_ line: String) {
@@ -247,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 alert.messageText = message
                 alert.runModal()
             } else if updated {
-                self.postNotification(id: "tablero-updated", title: "Tablero", body: message)
+                self.postNotification(id: "tablero-updated", title: appName(), body: message)
             }
         }
         // First check shortly after launch, then periodically while the app stays open.
@@ -260,11 +302,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updater.check()
     }
 
-    /// The rebuilt bundle replaced ours on disk: start it once this process has quit.
+    /// The rebuilt bundle replaced ours on disk (maybe under a new name): start it by bundle id once we quit.
     private func relaunch() {
         let relauncher = Process()
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relauncher.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        relauncher.arguments = ["-c", "sleep 1; /usr/bin/open -b \"$0\"", Bundle.main.bundleIdentifier ?? bundleID]
         try? relauncher.run()
         NSApp.terminate(nil)
     }
@@ -277,6 +319,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             content.body = body
             center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
         }
+    }
+
+    /// Window and menus pick the new name at once; the Dock/menu-bar name needs a rebuild.
+    private func nameChanged() {
+        window?.title = appName()
+        buildMenu()
+        let alert = NSAlert()
+        alert.messageText = "Nombre cambiado a «\(appName())»"
+        alert.informativeText = "Para verlo también en el Dock y en la barra de menús, la app se recompila y se reinicia."
+        alert.addButton(withTitle: "Reiniciar ahora")
+        alert.addButton(withTitle: "Más tarde")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        manualCheck = true // a failed rebuild shows an alert
+        updater.rebuild()
     }
 
     func showWindow() {
@@ -297,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        window.title = "Tablero"
+        window.title = appName()
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isOpaque = false
@@ -346,6 +402,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let bodyText = msg["body"] as? String ?? ""
         let body = (try? JSONSerialization.jsonObject(with: Data(bodyText.utf8))) as? [String: Any] ?? [:]
         let method = msg["method"] as? String ?? "GET"
+        if msg["resource"] as? String == "config" {
+            let reply = store.handleConfig(method: method, body: body)
+            if method == "PUT" { DispatchQueue.main.async { self.nameChanged() } }
+            return replyHandler(reply, nil)
+        }
         if msg["resource"] as? String == "labels" {
             return replyHandler(store.handleLabels(method: method, body: body), nil)
         }
@@ -401,12 +462,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let appItem = NSMenuItem()
         appItem.submenu = NSMenu()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        appItem.submenu?.addItem(withTitle: "Tablero \(version)", action: nil, keyEquivalent: "")
+        appItem.submenu?.addItem(withTitle: "\(appName()) \(version)", action: nil, keyEquivalent: "")
         appItem.submenu?.addItem(withTitle: "Buscar actualizaciones…", action: #selector(checkForUpdates(_:)), keyEquivalent: "u")
         appItem.submenu?.addItem(.separator())
-        appItem.submenu?.addItem(withTitle: "Ocultar Tablero", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appItem.submenu?.addItem(withTitle: "Ocultar \(appName())", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appItem.submenu?.addItem(.separator())
-        appItem.submenu?.addItem(withTitle: "Salir de Tablero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu?.addItem(withTitle: "Salir de \(appName())", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         main.addItem(appItem)
 
         // Needed so ⌘C/⌘V/⌘Z/⌘A work inside the web view
