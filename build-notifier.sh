@@ -47,6 +47,8 @@ PLIST
 # plutil escapes the name properly (it may contain &, <, quotes...).
 plutil -replace CFBundleName -string "$NAME" "$APP/Contents/Info.plist"
 plutil -replace CFBundleDisplayName -string "$NAME" "$APP/Contents/Info.plist"
+# The board folder (this checkout), so the code holds no machine-specific path.
+plutil -insert TableroDir -string "$DIR" "$APP/Contents/Info.plist"
 codesign --force --deep -s - "$APP"
 
 # Move aside every previous build of this app (same bundle id, maybe under an old name), then swap in.

@@ -6,8 +6,9 @@ import AppKit
 import UserNotifications
 import WebKit
 
-// Override with TABLERO_DIR; defaults to ~/tablero.
+// Board folder: TABLERO_DIR, else the folder build-notifier.sh stamped into Info.plist (TableroDir), else ~/tablero.
 let todoDir = ProcessInfo.processInfo.environment["TABLERO_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? (Bundle.main.object(forInfoDictionaryKey: "TableroDir") as? String).map { URL(fileURLWithPath: $0) }
     ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tablero")
 let statuses: Set<String> = ["todo", "doing", "qa", "done"]
 let defaultAppName = "Tablero"
